@@ -418,13 +418,7 @@ class Simulation:
     def initiate_quarantine(self, student, date, duration = None, positive_test = False):
         if duration == None:
             duration = self.parameters.quarantine_length
-        if student in self.state.Qa and positive_test:
-            del self.state.Qa[student]
-            self.state.R[student] = date
-        elif student in self.state.Qs and positive_test:
-            del self.state.Qs[student]
-            self.state.R[student] = date
-        elif student in self.state.Is:
+        if student in self.state.Is:
             if positive_test:
                 self.state.R[student] = date
             else:
