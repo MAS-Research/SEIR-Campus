@@ -1,6 +1,6 @@
 # SEIR-Campus
 
-**Citation info**: Zalesak, M; Samaranayake, S.  2020.  "[SEIR-Campus: Modeling Infectious Diseases on Univeristy Campuses](SeirCampusDescription.pdf)." 
+**Citation info**: Zalesak, M; Samaranayake, S.  2020.  "[SEIR-Campus: Modeling Infectious Diseases on Univeristy Campuses](ZalesakSamaranayakeSeirCampus.pdf)." 
 
 SEIR-Campus is a Python package designed to aid the modeling and study of infectious diseases spreading in communities with a focus on fast computations for large university campuses. It uses an agent based framework with interactions derived from individual movement patterns and interactions. For example, in the university setting using course registration data and models of student social dynamics to simulate day-by-day spread of infections in discrete time.  Its features include:
 
