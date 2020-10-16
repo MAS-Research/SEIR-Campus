@@ -1,6 +1,6 @@
 # SEIR-Campus
 
-**Citation info**: Zalesak, M; Samaranayake, S.  2020.  "[SEIR-Campus: Modeling Infectious Diseases on Univeristy Campuses](ZalesakSamaranayakeSeirCampus.pdf)." 
+**Citation info**: Zalesak, M; Samaranayake, S.  2020.  "[SEIR-Campus: Modeling Infectious Diseases on Univeristy Campuses](SeirCampus.pdf)." 
 
 SEIR-Campus is a Python package designed to aid the modeling and study of infectious diseases spreading in communities with a focus on fast computations for large university campuses. It uses an agent based framework with interactions derived from individual movement patterns and interactions. For example, in the university setting using course registration data and models of student social dynamics to simulate day-by-day spread of infections in discrete time.  Its features include:
 
@@ -13,7 +13,7 @@ SEIR-Campus is a Python package designed to aid the modeling and study of infect
 * Ability to add custom social networks
 * Fast computation of large problem instances (e.g., 20,000 individuals for a semester in less than five seconds)
 
-This repository contains the Python package PySeirCampus, located in the folder PySeirCampus.  Demonstrations of how to use the package are contained in the Jupyter notebook file [Examples.ipynb](Examples.ipynb).  A full description of the SEIR-Campus model, as well as explanations to go along with the examples, can be found in [our paper](ZalesakSamaranayakeSeirCampus.pdf).
+This repository contains the Python package PySeirCampus, located in the folder PySeirCampus.  Demonstrations of how to use the package are contained in the Jupyter notebook file [Examples.ipynb](Examples.ipynb).  A full description of the SEIR-Campus model, as well as explanations to go along with the examples, can be found in [our paper](SeirCampus.pdf).
 
 In order to use this package, you will need to have the following installed on your system:
 
