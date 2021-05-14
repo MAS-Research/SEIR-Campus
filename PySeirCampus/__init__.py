@@ -40,7 +40,7 @@ weekday_lookup = {
 }
 
 class Semester:
-    def __init__(self, datafile, holidays = set()):
+    def __init__(self, datafile = None, holidays = set()):
         self.meetings = {}
         self.students = {}
         self.groups = defaultdict(set)
@@ -49,6 +49,9 @@ class Semester:
         self.meeting_dates = defaultdict(dict)
         self.meeting_rooms = {} # Course --> Student --> Student --> Weight
         self.meeting_type = {}
+        
+        if not datafile:
+            return
         
         with open(datafile) as fin:
             for i, line in enumerate(fin):
@@ -87,12 +90,16 @@ class Semester:
                     holidays = set()):
         self.meetings[name] = info
         self.meeting_type[name] = meet_type
-        self.meeting_enrollment[name] = members
+        self.meeting_enrollment[name] = set(members)
         for member in self.meeting_enrollment[name]:
             self.student_enrollment[member].add(name)
         if type(meets) == list:
             for meet in meets:
                 date, end, weekday, duration = meet
+                if type(date) == str:
+                    date = datetime.strptime(date, '%m/%d/%Y')
+                if type(end) == str:
+                    end = datetime.strptime(end, '%m/%d/%Y')
                 weekday = set([weekday_lookup[x] for x in weekday])
                 while date <= end:
                     if date.weekday() in weekday and date not in holidays:
@@ -114,6 +121,12 @@ class Semester:
             if name in self.meeting_dates[date]:
                 del self.meeting_dates[date][name]
             date += timedelta(days = 1)
+    
+    def remove_student(self, student):
+        for meet in self.student_enrollment[student]:
+            self.meeting_enrollment[meet].discard(student)
+        del self.student_enrollment[student]
+        del self.students[student]
     
     def clean_student_list(self):
         group_members = set()
@@ -199,7 +212,7 @@ class VariedResponse:
                                  ', asympt ratio: ', nice_look(self.a_ratio), ')'])
     def duration(self, simulation, student, date):
         until_contagious = np.random.geometric(p = self.rate_contagious)
-        symptomatic = np.random.uniform() > self.a_ratio
+        symptomatic = student not in simulation.state.V and np.random.uniform() > self.a_ratio
         if symptomatic:
             sick_time = np.random.geometric(p = self.rate_symptoms)
         else:
@@ -241,6 +254,8 @@ class Parameters:
         self.repetitions = reps
         self.start_date = datetime(2020, 9, 2)
         self.end_date = datetime(2020, 11, 13)
+        self.vaccine_benefit_self = 0.9
+        self.vaccine_benefit_others = 0.5
     def info(self):
         for x in self.__dir__():
             if x[0] != '_' and x != 'info':
@@ -259,6 +274,8 @@ class Statistics:
         self.En = []
         self.In = []
         self.Rn = []
+        self.Vn = []
+        self.Source = {}
 
 class State:
     def __init__(self):
@@ -272,6 +289,8 @@ class State:
         self.Qa = {}
         self.Qs = {}
         self.R = {}
+        self.V = set()
+        self.A = set()
 
 class Simulation:
     def __init__(self, semester, parameters):
@@ -350,7 +369,9 @@ class Simulation:
                                              replace = True, 
                                              size = spontaneous))
             for student in to_infect:
-                self.infect(student, self.date)
+                if student not in self.state.V or np.random.rand() > self.parameters.vaccine_benefit_self:
+                    self.infect(student, self.date)
+                    self.statistics.Source[student] = 'Community'
     
     def infection_transmissions(self, verbose = True):
         date = self.date
@@ -370,7 +391,9 @@ class Simulation:
                 preclass_time = self.parameters.preclass_interaction_time if \
                         self.semester.meeting_type[course] == MeetType.COURSE else 0
                 if course not in self.semester.meeting_rooms:
-                    weight = len(infectious) * \
+                    unvaccinated = len([s for s in infectious if s not in self.state.V])
+                    vaccinated = len(infectious) - unvaccinated
+                    weight = (unvaccinated + (1 - self.parameters.vaccine_benefit_others) * vaccinated) * \
                             (preclass_time +  self.semester.meeting_dates[date][course]) * \
                             self.parameters.rate
                     if weight <= 1: # if it's cheaper to infect n people
@@ -385,7 +408,7 @@ class Simulation:
                         for peer, infect in zip(self.state.Sc[course], infection_vector):
                             if infect:
                                 to_infect.add(peer)
-                else: # if it is in self.semester.meeting_rooms
+                else: # if it is in self.semester.meeting_rooms.  This does not support vaccines yet. TODO.
                     weights = np.zeros(shape = len(students), dtype = float)
                     for i in infectious:
                         for j, s in enumerate(students):
@@ -409,7 +432,13 @@ class Simulation:
                                 to_infect.add(peer)
                 for peer in to_infect:
                     if peer in self.state.S:
-                        self.infect(peer, date)
+                        if peer not in self.state.V or np.random.rand() > self.parameters.vaccine_benefit_self:
+                            self.infect(peer, date)
+                            if 'type' in self.semester.meetings[course]:
+                                meet_type = self.semester.meetings[course]['type']
+                            else:
+                                meet_type = 'Unknown'
+                            self.statistics.Source[peer] = meet_type
         
         
     
@@ -420,6 +449,7 @@ class Simulation:
                 self.state.Sc[c].remove(student)
             infec_d, remove_d, symptomatic = self.parameters.infection_duration.duration(
                     self, student, date)
+            # TODO: Placeholder for way we can process vaccinated individuals differently.
             self.state.S.remove(student)
             self.state.E[student] = (infec_d, remove_d, symptomatic)
     
@@ -461,9 +491,10 @@ class Simulation:
         self.statistics.Tn.append(self.date)
         self.statistics.Qn.append(len(self.state.Q) + len(self.state.Qe) + len(self.state.Qs) + len(self.state.Qa))
         self.statistics.Sn.append(len(self.state.S) + len(self.state.Q))
-        self.statistics.En.append(len(self.semester.students) - self.statistics.Sn[-1])
+        self.statistics.En.append(len(self.semester.students) - self.statistics.Sn[-1] - len(self.state.A))
         self.statistics.In.append(len(self.state.Ia) + len(self.state.Is))
         self.statistics.Rn.append(len(self.state.R))
+        self.statistics.Vn.append(len(self.state.V))
 
         if verbose:
             print(str(self.date).split(' ')[0], 
@@ -475,7 +506,7 @@ class Simulation:
     
     def get_statistics(self):
         return self.statistics.Tn, self.statistics.Sn, self.statistics.En, \
-                self.statistics.In, self.statistics.Rn, self.statistics.Qn
+                self.statistics.In, self.statistics.Rn, self.statistics.Qn, self.statistics.Vn
 
     def run(self, verbose = False):
         while self.date <= self.parameters.end_date:
@@ -488,7 +519,7 @@ class Simulation:
     
 # Convenience function for running many repetitions of an experiment.
 
-def run_repetitions(semester, parameters, save = None):
+def run_repetitions(semester, parameters, save = None, report = False, conciseview = False, graphics = True):
     # Code to run the simulations...
     print('Running', parameters.repetitions, 'repetitions.')
     start_time = datetime.now()
@@ -497,6 +528,10 @@ def run_repetitions(semester, parameters, save = None):
     Is = defaultdict(list)
     Rs = defaultdict(list)
     Qs = defaultdict(list)
+    Vs = defaultdict(list)
+    Sources = defaultdict(int)
+    SourceDistributions = defaultdict(list)
+    Types = {'Vaccinated': 0, 'Unvaccinated': 0}
     if parameters.verbose:
         print('Repetition:', end =" ")
     for i in range(parameters.repetitions):
@@ -510,15 +545,49 @@ def run_repetitions(semester, parameters, save = None):
                     replace = False, size = parameters.initial_exposure)
         for s in parameters.initial_exposure:
             simulation.infect(s, parameters.start_date)
+            simulation.statistics.Source[s] = 'Community'
         
         simulation.run(verbose = parameters.repetitions == 1)
-        T, S, E, I, R, Q = simulation.get_statistics()
-        for t, s, e, i, r, q in zip(T, S, E, I, R, Q):
+        source_distribution = defaultdict(int)
+        for source in simulation.statistics.Source.values():
+            source_distribution[source] += 1
+        #for source, value in source_distribution.items():
+        #    Sources[source] += value
+        for source in ['Community', 'Classroom', 'Socialization', 'Broad', 'Club', 'Dorm']:
+            if source in source_distribution:
+                SourceDistributions[source].append(source_distribution[source])
+                Sources[source] += source_distribution[source]
+            else:
+                SourceDistributions[source].append(0)
+                Sources[source] += 0
+        for student in simulation.semester.students:
+            if student not in simulation.state.S and student not in simulation.state.A:
+                if student in simulation.state.V:
+                    Types['Vaccinated'] += 1
+                else:
+                    Types['Unvaccinated'] += 1
+        T, S, E, I, R, Q, V = simulation.get_statistics()
+        for t, s, e, i, r, q, v in zip(T, S, E, I, R, Q, V):
             Ss[t].append(s)
             Es[t].append(e)
             Is[t].append(i)
             Rs[t].append(r)
             Qs[t].append(q)
+            Vs[t].append(v)
+    for key in Sources:
+        Sources[key] /= parameters.repetitions
+    for key in Types:
+        Types[key] /= parameters.repetitions
+    Summary = {'T': T,
+               'Ss': Ss,
+               'Es': Es,
+               'Is': Is,
+               'Rs': Rs,
+               'Qs': Qs,
+               'Vs': Vs}
+    
+    if report and not graphics:
+        return Sources, SourceDistributions, Types, Summary
 
     # Print text summary of the results.
     if parameters.verbose:
@@ -534,53 +603,93 @@ def run_repetitions(semester, parameters, save = None):
     
     quarantines = np.array([np.mean(Qs[t]) for t in T])
     print('Quarantine: max', max(quarantines), ', avg', np.mean(quarantines))
-
-    # Plot mean values.
-    locator = mdates.AutoDateLocator(interval_multiples = False)
-    formatter = mdates.AutoDateFormatter(locator)
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize = (16, 4.5))
-    ax1.plot(T, [np.mean(Ss[t]) for t in T])
-    ax1.plot(T, [np.mean(Es[t]) for t in T])
-    ax1.plot(T, [np.mean(Is[t]) for t in T])
-    ax1.plot(T, [np.mean(Rs[t]) for t in T])
-    ax1.plot(T, [np.mean(Qs[t]) for t in T])
-    ax1.legend(['S', 'E', 'I', 'R', 'Q'])
-    ax1.set_title('Epidemic Progression')
-    ax1.set_xlabel('Day of Year')
-    ax1.set_ylabel('Number of Students')
-    ax1.xaxis.set_major_locator(locator) # Annoying code to make dates work!
-    ax1.xaxis.set_major_formatter(formatter)
     
-    # Plot percentiles for total exposed.
-    ps = [1, 5, 25, 50, 75, 95, 100]
-    ps.sort(reverse = True)
-    Ep = {p : [np.percentile(Es[t], p) for t in T] for p in ps}
-    for p in ps:
-        ax2.plot(T, Ep[p])
-    ax2.legend(list(map(lambda x : str(x) + '%', ps)))
-    ax2.set_title('Percentiles of Exposed Students')
-    ax2.set_xlabel('Day of Year')
-    ax2.set_ylabel('Number of Students')
-    ax2.xaxis.set_major_locator(locator)
-    ax2.xaxis.set_major_formatter(formatter)
+    if not conciseview:
+        # Plot mean values.
+        locator = mdates.AutoDateLocator(interval_multiples = False)
+        formatter = mdates.AutoDateFormatter(locator)
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize = (16, 4.5))
+        ax1.plot(T, [np.mean(Ss[t]) for t in T])
+        ax1.plot(T, [np.mean(Es[t]) for t in T])
+        ax1.plot(T, [np.mean(Is[t]) for t in T])
+        ax1.plot(T, [np.mean(Rs[t]) for t in T])
+        ax1.plot(T, [np.mean(Qs[t]) for t in T])
+        ax1.legend(['S', 'E', 'I', 'R', 'Q'])
+        ax1.set_title('Epidemic Progression')
+        ax1.set_xlabel('Day of Year')
+        ax1.set_ylabel('Number of Students')
+        ax1.xaxis.set_major_locator(locator) # Annoying code to make dates work!
+        ax1.xaxis.set_major_formatter(formatter)
+        
+        # Plot percentiles for total exposed.
+        ps = [1, 5, 25, 50, 75, 95, 100]
+        ps.sort(reverse = True)
+        Ep = {p : [np.percentile(Es[t], p) for t in T] for p in ps}
+        for p in ps:
+            ax2.plot(T, Ep[p])
+        ax2.legend(list(map(lambda x : str(x) + '%', ps)))
+        ax2.set_title('Percentiles of Exposed Students')
+        ax2.set_xlabel('Day of Year')
+        ax2.set_ylabel('Number of Students')
+        ax2.xaxis.set_major_locator(locator)
+        ax2.xaxis.set_major_formatter(formatter)
 
-    # Plot percentiles for number infectious.
-    Ip = {p : [np.percentile(Is[t], p) for t in T] for p in ps}
-    for p in ps:
-        ax3.plot(T, Ip[p])
-    ax3.legend(list(map(lambda x : str(x) + '%', ps)))
-    ax3.set_title('Percentiles of Infectious Students')
-    ax3.set_xlabel('Day of Year')
-    ax3.set_ylabel('Number of Students')
-    ax3.xaxis.set_major_locator(locator)
-    ax3.xaxis.set_major_formatter(formatter)
-    fig.autofmt_xdate()
-    plt.tight_layout()
-    
-    if save is not None:
-        plt.savefig(save)
+        # Plot percentiles for number infectious.
+        Ip = {p : [np.percentile(Is[t], p) for t in T] for p in ps}
+        for p in ps:
+            ax3.plot(T, Ip[p])
+        ax3.legend(list(map(lambda x : str(x) + '%', ps)))
+        ax3.set_title('Percentiles of Infectious Students')
+        ax3.set_xlabel('Day of Year')
+        ax3.set_ylabel('Number of Students')
+        ax3.xaxis.set_major_locator(locator)
+        ax3.xaxis.set_major_formatter(formatter)
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        
+        if False: # save is not None: TODO TODO TODO Restore.
+            plt.savefig(save)
+        else:
+            plt.show()
     else:
+        locator = mdates.AutoDateLocator(interval_multiples = False)
+        formatter = mdates.AutoDateFormatter(locator)
+        fig, ax1 = plt.subplots()
+        ax1.plot(T, [np.mean(Es[t]) for t in T])
+        #ax1.plot(T, [np.mean(Is[t]) for t in T])
+        #ax1.plot(T, [np.mean(Rs[t]) for t in T])
+        #ax1.plot(T, [np.mean(Qs[t]) for t in T])
+        #ax1.plot(T, [np.mean(Vs[t]) for t in T])
+        #ax1.legend(['E', 'I', 'R', 'Q'])
+        ax1.set_title('Epidemic Progression')
+        ax1.set_xlabel('Day of Year')
+        ax1.set_ylabel('Number of Students')
+        ax1.xaxis.set_major_locator(locator) # Annoying code to make dates work!
+        ax1.xaxis.set_major_formatter(formatter)
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        #if save: TODO TODO TODO Restore.
+        #    fig.savefig(save + '-exposures.pdf')
         plt.show()
+        
+        fig, ax1 = plt.subplots()
+        xs = []
+        ys = []
+        for key, value in Sources.items():
+            xs.append(key)
+            ys.append(value)
+
+        ax1.bar(xs, ys)
+        ax1.set_title('Sources of Infections')
+        ax1.set_ylabel('Number of People')
+        plt.xticks(rotation = 30)
+        plt.tight_layout()
+        #if save: TODO TODO TODO Restore.
+        #    fig.savefig(save + '-sources.pdf')
+        plt.show()
+    
+    if report:
+        return Sources, SourceDistributions, Types, Summary
 
 # Additional support.
 
